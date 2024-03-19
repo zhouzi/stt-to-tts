@@ -23,7 +23,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { useMediaRecorder } from "@/hooks/useMediaRecorder";
 import { Message } from "@/lib/utils";
 
-export const nanoid = customAlphabet(
+const nanoid = customAlphabet(
   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
   7,
 );

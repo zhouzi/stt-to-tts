@@ -1,113 +1,247 @@
-import Image from "next/image";
+"use client";
+
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Github, LoaderCircle, Mic } from "lucide-react";
+import { customAlphabet } from "nanoid/non-secure";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+
+import { Button } from "@/components/ui/button";
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
+import { useAudio } from "@/hooks/useAudio";
+import { useMediaRecorder } from "@/hooks/useMediaRecorder";
+import { Message } from "@/lib/utils";
+
+export const nanoid = customAlphabet(
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  7,
+);
+
+const formSchema = z.object({
+  openaiApiKey: z.string().optional(),
+});
 
 export default function Home() {
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+  });
+  const formRef = useRef(form);
+
+  const [messages, setMessages] = useState<Message[]>([]);
+
+  const [abortController] = useState(new AbortController());
+  const mediaRecorder = useMediaRecorder();
+
+  const audio = useAudio();
+  const audioRef = useRef(audio);
+
+  const [loading, setLoading] = useState(false);
+
+  useLayoutEffect(() => {
+    formRef.current = form;
+  }, [form]);
+
+  useLayoutEffect(() => {
+    audioRef.current = audio;
+  }, [audio]);
+
+  useEffect(() => {
+    return () => abortController.abort();
+  }, [abortController]);
+
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+
+    if (lastMessage == null) {
+      return;
+    }
+
+    if (lastMessage.role === "human") {
+      const abortContoller = new AbortController();
+
+      const headers = new Headers();
+
+      const openApiKey = formRef.current.getValues("openaiApiKey");
+      if (openApiKey) {
+        headers.set("x-api-key", openApiKey);
+      }
+
+      fetch("/api/chat/openai", {
+        method: "POST",
+        body: JSON.stringify({ messages }),
+        headers,
+        signal: abortContoller.signal,
+      }).then((res) => {
+        if (res.ok) {
+          return res.text().then((answer) => {
+            setMessages((currentMessages) =>
+              currentMessages.concat({
+                id: nanoid(),
+                role: "ai",
+                content: answer,
+              }),
+            );
+          });
+        }
+      });
+      return () => abortContoller.abort();
+    }
+
+    if (lastMessage.role === "ai") {
+      const abortContoller = new AbortController();
+
+      const headers = new Headers();
+
+      const openApiKey = formRef.current.getValues("openaiApiKey");
+      if (openApiKey) {
+        headers.set("x-api-key", openApiKey);
+      }
+
+      fetch("/api/tts/openai", {
+        method: "POST",
+        body: JSON.stringify({ content: lastMessage.content }),
+        headers,
+        signal: abortContoller.signal,
+      }).then((res) => {
+        if (res.ok) {
+          return res.arrayBuffer().then((arrayBuffer) => {
+            const audioBlob = new Blob([arrayBuffer], { type: "audio/mpeg" });
+            const objectUrl = URL.createObjectURL(audioBlob);
+
+            audioRef.current.start(objectUrl);
+            setLoading(false);
+          });
+        }
+      });
+
+      return () => abortContoller.abort();
+    }
+  }, [messages]);
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <div className="container h-full">
+      <header className="py-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold">Playground</h2>
+        <div className="flex gap-2">
+          <Button variant="link" asChild>
+            <a href="https://gabin.app">@gabinaureche</a>
+          </Button>
+          <Button variant="secondary" asChild>
+            <a href="https://github.com/zhouzi/stt-to-tts">
+              <Github className="mr-2 size-4" />
+              GitHub
+            </a>
+          </Button>
         </div>
-      </div>
+      </header>
+      <Separator />
+      <main className="grid h-full items-stretch gap-6 grid-cols-[1fr_400px] py-4">
+        <div className="flex flex-col gap-4">
+          <div className="flex justify-center">
+            {mediaRecorder.status === "inactive" ? (
+              <Button
+                size="icon"
+                disabled={audio.status === "playing" || loading}
+                onClick={async () => {
+                  const file = await mediaRecorder.start(
+                    abortController.signal,
+                  );
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-full sm:before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full sm:after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
+                  const formData = new FormData();
+                  formData.append("audio", file);
 
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
+                  const headers = new Headers();
 
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
+                  const openApiKey = form.getValues("openaiApiKey");
+                  if (openApiKey) {
+                    headers.set("x-api-key", openApiKey);
+                  }
 
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
+                  setLoading(true);
 
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50 text-balance`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+                  const res = await fetch("/api/stt/openai", {
+                    method: "POST",
+                    body: formData,
+                    headers,
+                  });
+
+                  if (!res.ok) {
+                    throw new Error(res.statusText);
+                  }
+
+                  const json = (await res.json()) as { text: string };
+
+                  setMessages((currentMessages) =>
+                    currentMessages.concat({
+                      id: nanoid(),
+                      role: "human",
+                      content: json.text,
+                    }),
+                  );
+                }}
+              >
+                {loading ? <LoaderCircle className="animate-spin" /> : <Mic />}
+              </Button>
+            ) : (
+              <Button
+                size="icon"
+                variant="secondary"
+                onClick={() => mediaRecorder.stop()}
+              >
+                <Mic className="animate-pulse text-red-600" />
+              </Button>
+            )}
+          </div>
+
+          <div className="flex-1">
+            <ul className="list-disc pl-4 whitespace-break-spaces space-y-2">
+              {messages
+                .slice()
+                .reverse()
+                .map((message) => (
+                  <li key={message.id}>
+                    <strong className="font-bold">{message.role}</strong>:{" "}
+                    {message.content}
+                  </li>
+                ))}
+            </ul>
+          </div>
+        </div>
+        <div>
+          <Form {...form}>
+            <form className="space-y-4">
+              <FormField
+                control={form.control}
+                name="openaiApiKey"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Clé API OpenAI</FormLabel>
+                    <FormControl>
+                      <Input placeholder="sk-123456789" {...field} />
+                    </FormControl>
+                    <FormDescription>
+                      La clé API OpenAI est requise pour utiliser le
+                      speech-to-text et le text-to-speech de OpenAI.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </form>
+          </Form>
+        </div>
+      </main>
+    </div>
   );
 }
